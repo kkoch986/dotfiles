@@ -4,20 +4,17 @@ Personal config for nvim, tmux, Hyprland, kitty/foot, fish/zsh, starship, and mo
 
 Managed with [GNU Stow](https://www.gnu.org/software/stow/).
 
-## Quick Start
+## Quick Start (Arch)
 
 ```bash
-# Install stow (Arch)
+# Install stow + all tool dependencies
 sudo pacman -S stow
 
 # Clone (if using git) or navigate to repo
 cd ~/dotfiles
 
-# See what tools are missing
-make check-deps
-
-# Backup existing configs, then deploy
-make backup && make
+# Install all dependencies + deploy
+make install-deps && make
 ```
 
 ## Manual Stow

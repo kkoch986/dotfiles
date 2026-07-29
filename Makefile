@@ -19,7 +19,10 @@ TOOLS := \
   home/.zshrc:zsh \
   home/.bashrc:bash
 
-.PHONY: all install check-deps stow stow-dry stow-home backup clean force help
+# Arch packages for each tool (only where binary name != package name)
+ARCH_PKGS := tmux neovim hyprland kitty foot fish starship wlogout fuzzel mpv zsh
+
+.PHONY: all install install-deps check-deps stow stow-dry stow-home backup clean force help
 
 all: install
 
@@ -56,6 +59,25 @@ check-deps:
 	fi
 
 # Backup existing files, remove originals, then stow
+# Install missing Arch packages for all configs
+install-deps:
+	@echo "=== Installing required packages ==="; \
+	pkgs=""; \
+	for pkg in $(ARCH_PKGS); do \
+		bin="$$pkg"; \
+		[ "$$pkg" = "neovim" ] && bin="nvim"; \
+		[ "$$pkg" = "hyprland" ] && bin="Hyprland"; \
+		if ! command -v "$$bin" >/dev/null 2>&1; then \
+			pkgs="$$pkgs $$pkg"; \
+		fi; \
+	done; \
+	if [ -z "$$pkgs" ]; then \
+		echo "  All tools already installed."; \
+	else \
+		echo "  Installing:$$pkgs"; \
+		sudo pacman -S --needed $$pkgs; \
+	fi
+
 install: check-deps
 ifndef STOW
 	$(error "GNU Stow not found. Install with: sudo pacman -S stow")
@@ -166,6 +188,7 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  all / install   Backup conflicts, remove originals, deploy symlinks"
+	@echo "  install-deps    Install missing Arch packages (sudo pacman -S)"
 	@echo "  check-deps      Check which required tools are installed"
 	@echo "  force           Adopt existing files INTO repo (use with caution)"
 	@echo "  backup          Copy existing files to backup dir (does not remove)"
@@ -174,4 +197,4 @@ help:
 	@echo "  clean           Remove all stow-managed symlinks"
 	@echo "  help            Show this message"
 	@echo ""
-	@echo "First run: make"
+	@echo "First run: sudo pacman -S stow && make install-deps && make"
