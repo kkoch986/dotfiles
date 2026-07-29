@@ -1,0 +1,242 @@
+# alias j="cargs autojump | cd "
+
+alias zentail="cd /home/ken/go/src/github.com/hdtradeservices; claude"
+
+alias gs="git status"
+
+alias vim='NVIM_APPNAME=lazyvim nvim'
+
+alias greph='grep -ir --exclude-dir="*vendor*" --include "*.php"';
+
+alias todo='grep -ir TODO ';
+
+alias tagtoday='date +"r%Y.%m.%d" | xargs git tag'
+
+alias mustjq='jq -R "fromjson? | ."'
+
+alias beep='(speaker-test -t sine -f 1000 -l 1 & sleep .2 && kill -9 $!) 2>/dev/null >/dev/null'
+
+alias speak='(spd-say -e -t male1 -p -100 -i -80) 2>/dev/null >/dev/null'
+
+alias gssh="TERM=xterm-256color gcloud compute ssh"
+
+alias gscp="gcloud compute scp"
+
+alias agent="cursor-agent"
+alias agentc="cursor-agent --continue"
+
+# notify-send with 3s display time (watchdeploy, prwatch)
+ns() { notify-send -t 3000 "$@"; }
+
+deploywatch() {
+    local dir="${1:-.}"
+    cd "$dir" || return 1
+    local repo run_id status title
+    repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+    run_id=$(gh run list --limit=30 --json databaseId,status,workflowName -q \
+      '[.[] | select(.status=="in_progress" or .status=="queued") | select(.workflowName|test("deploy";"i"))][0].databaseId')
+    if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+      ns "Deploy watch" "No running deploy for $repo"
+      return 1
+    fi
+    gh run watch "$run_id" --exit-status
+    local ec=$?
+    read -r status title < <(gh run view "$run_id" --json conclusion,displayTitle -q '[.conclusion,.displayTitle] | @tsv')
+    ns "Deploy finished: $repo" "${status:-unknown} — ${title:-deploy}"
+    return "$ec"
+}
+
+prwatch() {
+    local follow=false
+    local dir="."
+    local interval=10
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --follow|-f) follow=true; shift ;;
+            -i|--interval)
+                interval="${2:?interval required}"
+                shift 2
+                ;;
+            *)
+                if [ "$dir" = "." ] && [[ "$1" =~ ^[0-9]+$ ]]; then
+                    interval="$1"
+                else
+                    dir="$1"
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    cd "$dir" || return 1
+
+    local repo pr_num pr_title
+    repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
+    pr_num=$(gh pr view --json number -q .number 2>/dev/null) || {
+        ns "PR watch" "No PR for current branch in $repo"
+        return 1
+    }
+    pr_title=$(gh pr view --json title -q .title)
+    local pr_url
+    pr_url=$(gh pr view --json url -q .url)
+
+    _prwatch_log() {
+        printf '[prwatch %s] %s\n' "$(date +%H:%M:%S)" "$*"
+    }
+
+    _prwatch_notify() {
+        local title="$1" body="$2"
+        _prwatch_log "$title — $body"
+        (
+            action=$(notify-send -t 3000 -a prwatch \
+                -h "string:x-uri:$pr_url" \
+                -A "open=Open PR" \
+                "$title" "$body" 2>/dev/null) || true
+            if [ "$action" = "open" ]; then
+                xdg-open "$pr_url" >/dev/null 2>&1 &
+            fi
+        ) &
+    }
+
+    _prwatch_log "watching PR #$pr_num · $repo"
+    _prwatch_log "$pr_title"
+    _prwatch_log "$pr_url"
+    _prwatch_notify "PR watch: $repo" "#$pr_num — $pr_title"
+
+    declare -A last_check_states=()
+    declare -A last_review_states=()
+    local last_merge="" last_review="" last_summary="" last_review_requests=""
+    local notified_done=false notified_ci_passed=false
+
+    _prwatch_review_msg() {
+        case "$1" in
+            REVIEW_REQUIRED) echo "approval required" ;;
+            APPROVED) echo "approved" ;;
+            CHANGES_REQUESTED) echo "changes requested" ;;
+            "") echo "no review required" ;;
+            *) echo "$1" ;;
+        esac
+    }
+
+    while true; do
+        local merge review checks_json pr_json review_requests
+        pr_json=$(gh pr view "$pr_num" --json mergeStateStatus,reviewDecision,latestReviews,reviewRequests)
+        merge=$(jq -r '.mergeStateStatus' <<<"$pr_json")
+        review=$(jq -r '.reviewDecision // ""' <<<"$pr_json")
+        review_requests=$(jq -r '
+            [.reviewRequests[]?.requestedReviewer | (.login // .slug // .name // empty)]
+            | sort | join(",")
+        ' <<<"$pr_json")
+
+        if [ -n "$last_merge" ] && [ "$merge" != "$last_merge" ]; then
+            _prwatch_notify "PR #$pr_num merge" "$merge — $repo"
+        fi
+        if [ -n "$last_review" ] && [ "$review" != "$last_review" ]; then
+            _prwatch_notify "PR #$pr_num review" "$(_prwatch_review_msg "$review") — $repo"
+            notified_done=false
+        fi
+        if [ -n "$last_review_requests" ] && [ "$review_requests" != "$last_review_requests" ]; then
+            if [ -n "$review_requests" ]; then
+                _prwatch_notify "PR #$pr_num reviewers" "requested: $review_requests — $repo"
+            else
+                _prwatch_notify "PR #$pr_num reviewers" "review requests cleared — $repo"
+            fi
+            notified_done=false
+        fi
+        last_merge=$merge
+        last_review=$review
+        last_review_requests=$review_requests
+
+        while IFS=$'\t' read -r author state; do
+            [ -n "$author" ] || continue
+            local prev="${last_review_states[$author]:-}"
+            if [ -n "$prev" ] && [ "$prev" != "$state" ]; then
+                _prwatch_notify "PR #$pr_num: @$author" "$state — $repo"
+                notified_done=false
+            fi
+            last_review_states[$author]=$state
+        done < <(jq -r '.latestReviews[] | [.author.login, .state] | @tsv' <<<"$pr_json")
+
+        checks_json=$(gh pr checks "$pr_num" --json name,state,bucket 2>/dev/null) || checks_json='[]'
+
+        local total pending pass fail
+        total=$(jq 'length' <<<"$checks_json")
+        pending=$(jq '[.[] | select(.bucket == "pending")] | length' <<<"$checks_json")
+        pass=$(jq '[.[] | select(.bucket == "pass")] | length' <<<"$checks_json")
+        fail=$(jq '[.[] | select(.bucket == "fail")] | length' <<<"$checks_json")
+
+        while IFS=$'\t' read -r name state bucket; do
+            [ -n "$name" ] || continue
+            local prev="${last_check_states[$name]:-}"
+            if [ -n "$prev" ] && [ "$prev" != "$state" ]; then
+                _prwatch_notify "PR #$pr_num: $name" "$state ($bucket) — $repo"
+                notified_done=false
+            fi
+            last_check_states[$name]=$state
+        done < <(jq -r '.[] | [.name, .state, .bucket] | @tsv' <<<"$checks_json")
+
+        local review_msg ci_ready review_ready
+        review_msg=$(_prwatch_review_msg "$review")
+        ci_ready=false
+        review_ready=false
+        case "$review" in
+            APPROVED|"") review_ready=true ;;
+        esac
+
+        local summary
+        if [ "$total" -eq 0 ]; then
+            summary="no checks yet · merge=$merge · $review_msg"
+        else
+            summary="${pass}/${total} pass · $review_msg"
+            [ "$pending" -gt 0 ] && summary="$pending pending · $summary"
+            [ "$fail" -gt 0 ] && summary="$fail failed · $summary"
+        fi
+        [ -n "$review_requests" ] && summary="$summary · waiting on $review_requests"
+
+        if [ -n "$last_summary" ] && [ "$summary" != "$last_summary" ]; then
+            _prwatch_notify "PR #$pr_num status" "$summary — $repo"
+        fi
+        last_summary=$summary
+
+        _prwatch_log "… $summary"
+
+        if [ "$total" -gt 0 ] && [ "$pending" -eq 0 ]; then
+            if [ "$fail" -gt 0 ]; then
+                ci_ready=false
+            else
+                ci_ready=true
+            fi
+        fi
+
+        if [ "$ci_ready" = true ] && [ "$notified_ci_passed" = false ]; then
+            notified_ci_passed=true
+            if [ "$review" = "REVIEW_REQUIRED" ] || [ "$review" = "CHANGES_REQUESTED" ]; then
+                _prwatch_notify "PR #$pr_num CI done" "checks passed · $review_msg — $repo"
+            fi
+        fi
+        [ "$ci_ready" = false ] && notified_ci_passed=false
+
+        if [ "$notified_done" = false ]; then
+            if [ "$total" -gt 0 ] && [ "$fail" -gt 0 ] && [ "$pending" -eq 0 ]; then
+                _prwatch_notify "PR #$pr_num done" "CI failed ($fail/$total) — $repo"
+                _prwatch_log "finished (CI failed); open: $pr_url"
+                notified_done=true
+                $follow || return 1
+            elif [ "$ci_ready" = true ] && [ "$review_ready" = true ]; then
+                _prwatch_notify "PR #$pr_num ready" "checks passed · approved — $repo"
+                _prwatch_log "finished (ready to merge); open: $pr_url"
+                notified_done=true
+                $follow || return 0
+            elif [ "$total" -eq 0 ] && [ "$review_ready" = true ] && [ "$review" != "REVIEW_REQUIRED" ]; then
+                _prwatch_notify "PR #$pr_num ready" "$review_msg — $repo"
+                _prwatch_log "finished ($review_msg); open: $pr_url"
+                notified_done=true
+                $follow || return 0
+            fi
+        fi
+
+        sleep "$interval"
+    done
+}
+

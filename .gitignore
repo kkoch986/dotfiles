@@ -1,0 +1,14 @@
+# Generated / state files
+lazy-lock.json
+fish_variables
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Backup files
+*~
+*.swp
+*.bak
+backup-*/
+bin/
