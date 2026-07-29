@@ -5,7 +5,6 @@ STOW  := $(shell command -v stow 2>/dev/null)
 PACKAGES := home
 
 # Config paths and the binary(s) they need (comma-separated alternatives)
-# Format: path:binary[,binary,...]
 TOOLS := \
   home/.tmux.conf:tmux \
   home/.config/nvim:nvim \
@@ -20,11 +19,11 @@ TOOLS := \
   home/.zshrc:zsh \
   home/.bashrc:bash
 
-.PHONY: all install check-deps stow stow-dry stow-home backup clean help
+.PHONY: all install check-deps stow stow-dry stow-home backup clean force help
 
 all: install
 
-# Check each config file exists and its binary is available
+# Check required tools are installed
 check-deps:
 	@echo "=== Checking required tools ==="; \
 	missing=""; \
@@ -56,19 +55,39 @@ check-deps:
 		echo "  All tools found."; \
 	fi
 
+# Backup existing files, remove originals, then stow
 install: check-deps
 ifndef STOW
 	$(error "GNU Stow not found. Install with: sudo pacman -S stow")
 endif
-	@echo "Deploying dotfiles with stow..."
-	@cd $(DOTDIR) && for pkg in $(PACKAGES); do \
+	@echo ""
+	@backed=0; BACKUP_DIR="$(DOTDIR)backup-$$(date +%Y%m%d-%H%M%S)"; \
+	for pkg in $(PACKAGES); do \
+		for f in $$(cd $(DOTDIR)$$pkg && find . -type f -o -type l | sed 's|^\./||'); do \
+			target="$(HOME)/$$f"; \
+			if [ -e "$$target" ] && [ ! -L "$$target" ]; then \
+				if [ "$$backed" -eq 0 ]; then \
+					echo "=== Backing up conflicting files ==="; \
+					mkdir -p "$$BACKUP_DIR"; \
+					backed=1; \
+				fi; \
+				dst="$$BACKUP_DIR/$$f"; \
+				mkdir -p "$$(dirname "$$dst")"; \
+				cp -a "$$target" "$$dst"; \
+				rm -f "$$target"; \
+				echo "  moved: $$target -> $$dst"; \
+			fi; \
+		done; \
+	done; \
+	if [ "$$backed" -eq 1 ]; then echo "Backup saved to $$BACKUP_DIR"; echo ""; fi; \
+	echo "Deploying dotfiles with stow..."; \
+	for pkg in $(PACKAGES); do \
 		echo "  stow $$pkg"; \
 		stow --restow --target=$(HOME) $$pkg; \
-	done
-	@echo "Done."
+	done; \
+	echo "Done."
 
-# --- Stow variants ---
-
+# Dry run
 stow-dry:
 ifndef STOW
 	$(error "GNU Stow not found.")
@@ -79,12 +98,7 @@ endif
 		stow --verbose --no --target=$(HOME) $$pkg; \
 	done
 
-stow-home:
-ifndef STOW
-	$(error "GNU Stow not found.")
-endif
-	cd $(DOTDIR) && stow --restow --target=$(HOME) home
-
+# Stow only (no backup, will fail on conflicts)
 stow:
 ifndef STOW
 	$(error "GNU Stow not found.")
@@ -94,8 +108,27 @@ endif
 		stow --restow --target=$(HOME) $$pkg; \
 	done
 
-# --- Backup ---
+stow-home:
+ifndef STOW
+	$(error "GNU Stow not found.")
+endif
+	cd $(DOTDIR) && stow --restow --target=$(HOME) home
 
+# Force: adopt existing files into the stow package instead of backing them up
+force:
+ifndef STOW
+	$(error "GNU Stow not found.")
+endif
+	@echo "=== Adopting existing files into dotfiles repo ==="; \
+	for pkg in $(PACKAGES); do \
+		echo "  stow --adopt $$pkg"; \
+		stow --adopt --restow --target=$(HOME) $$pkg; \
+	done; \
+	echo ""; \
+	echo "WARNING: Existing files were moved INTO the repo."; \
+	echo "Run 'git status' and 'git diff' to review changes."
+
+# Backup only (does NOT remove originals, just copies)
 BACKUP_DIR := $(DOTDIR)backup-$(shell date +%Y%m%d-%H%M%S)
 
 backup:
@@ -116,8 +149,7 @@ backup:
 	done
 	@echo "Backup saved to $(BACKUP_DIR)"
 
-# --- Clean ---
-
+# Clean: remove all stow symlinks
 clean:
 ifndef STOW
 	$(error "GNU Stow not found.")
@@ -128,18 +160,18 @@ endif
 	done
 	@echo "Symlinks removed."
 
-# --- Help ---
-
+# Help
 help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all / install   Check deps + deploy all dotfiles (default)"
+	@echo "  all / install   Backup conflicts, remove originals, deploy symlinks"
 	@echo "  check-deps      Check which required tools are installed"
+	@echo "  force           Adopt existing files INTO repo (use with caution)"
+	@echo "  backup          Copy existing files to backup dir (does not remove)"
+	@echo "  stow            Stow without backup (fails on conflicts)"
 	@echo "  stow-dry        Dry run -- show what stow would do"
-	@echo "  stow-home       Deploy only home configs"
-	@echo "  backup          Backup existing non-symlinked dotfiles"
 	@echo "  clean           Remove all stow-managed symlinks"
 	@echo "  help            Show this message"
 	@echo ""
-	@echo "First run: make backup && make"
+	@echo "First run: make"
