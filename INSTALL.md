@@ -7,13 +7,13 @@ Managed with [GNU Stow](https://www.gnu.org/software/stow/).
 ## Quick Start (Arch)
 
 ```bash
-# Install stow + all tool dependencies
-sudo pacman -S stow
+# Prerequisites
+sudo pacman -S stow git
+yay -S wlogout        # or install via any AUR helper
 
-# Clone (if using git) or navigate to repo
+# Clone & deploy
+git clone git@github.com:kkoch986/dotfiles.git ~/dotfiles
 cd ~/dotfiles
-
-# Install all dependencies + deploy
 make install-deps && make
 ```
 

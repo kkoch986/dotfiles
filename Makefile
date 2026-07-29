@@ -19,8 +19,9 @@ TOOLS := \
   home/.zshrc:zsh \
   home/.bashrc:bash
 
-# Arch packages for each tool (only where binary name != package name)
-ARCH_PKGS := tmux neovim hyprland kitty foot fish starship wlogout fuzzel mpv zsh
+# Arch packages — split by repo
+PACMAN_PKGS := tmux neovim hyprland kitty foot fish starship fuzzel mpv zsh
+AUR_PKGS    := wlogout
 
 .PHONY: all install install-deps check-deps stow stow-dry stow-home backup clean force help
 
@@ -63,7 +64,7 @@ check-deps:
 install-deps:
 	@echo "=== Installing required packages ==="; \
 	pkgs=""; \
-	for pkg in $(ARCH_PKGS); do \
+	for pkg in $(PACMAN_PKGS); do \
 		bin="$$pkg"; \
 		[ "$$pkg" = "neovim" ] && bin="nvim"; \
 		[ "$$pkg" = "hyprland" ] && bin="Hyprland"; \
@@ -71,11 +72,29 @@ install-deps:
 			pkgs="$$pkgs $$pkg"; \
 		fi; \
 	done; \
-	if [ -z "$$pkgs" ]; then \
+	if [ -n "$$pkgs" ]; then \
+		echo "  Pacman: installing$$pkgs"; \
+		sudo pacman -S --needed $$pkgs || exit 1; \
+	fi; \
+	aur=""; \
+	for pkg in $(AUR_PKGS); do \
+		if ! command -v "$$pkg" >/dev/null 2>&1; then \
+			aur="$$aur $$pkg"; \
+		fi; \
+	done; \
+	if [ -n "$$aur" ]; then \
+		echo "  AUR:$$aur"; \
+		if command -v yay >/dev/null 2>&1; then \
+			yay -S --needed $$aur; \
+		elif command -v paru >/dev/null 2>&1; then \
+			paru -S --needed $$aur; \
+		else \
+			echo "  No AUR helper (yay/paru) found. Install manually:"; \
+			echo "    yay -S $$aur"; \
+		fi; \
+	fi; \
+	if [ -z "$$pkgs" ] && [ -z "$$aur" ]; then \
 		echo "  All tools already installed."; \
-	else \
-		echo "  Installing:$$pkgs"; \
-		sudo pacman -S --needed $$pkgs; \
 	fi
 
 install: check-deps
@@ -188,7 +207,7 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  all / install   Backup conflicts, remove originals, deploy symlinks"
-	@echo "  install-deps    Install missing Arch packages (sudo pacman -S)"
+	@echo "  install-deps    Install missing Arch + AUR packages (pacman/yay)"
 	@echo "  check-deps      Check which required tools are installed"
 	@echo "  force           Adopt existing files INTO repo (use with caution)"
 	@echo "  backup          Copy existing files to backup dir (does not remove)"
@@ -197,4 +216,4 @@ help:
 	@echo "  clean           Remove all stow-managed symlinks"
 	@echo "  help            Show this message"
 	@echo ""
-	@echo "First run: sudo pacman -S stow && make install-deps && make"
+	@echo "First run: sudo pacman -S stow && yay -S wlogout && make install-deps && make"
