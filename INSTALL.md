@@ -13,6 +13,9 @@ sudo pacman -S stow
 # Clone (if using git) or navigate to repo
 cd ~/dotfiles
 
+# See what tools are missing
+make check-deps
+
 # Backup existing configs, then deploy
 make backup && make
 ```
@@ -47,7 +50,7 @@ dotfiles/
 │       ├── zshrc.d/
 │       ├── systemd/
 │       └── autostart/
-├── Makefile       # Deploy/backup/clean targets
+├── Makefile       # check-deps, deploy, backup, clean targets
 ├── INSTALL.md
 ```
 
